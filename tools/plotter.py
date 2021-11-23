@@ -27,7 +27,7 @@ try:
             plt.xlim(0,4096)
             plt.ylim(0,4096)
             # plt.line(dt)
-            plt.pause(0.05)
+            plt.pause(0.01)
 except:
     print("Exiting")
     raise

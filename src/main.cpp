@@ -54,10 +54,10 @@ void initPins(void){
   servo3.attach(SERVO3);
   servo4.attach(SERVO4);
 
-  servo1.writeMicroseconds(map(2048,0,4096,500,2500));
-  servo2.writeMicroseconds(map(2048,0,4096,500,2500));
+  servo1.writeMicroseconds(map(2048,0,4096,1200,1800));
+  servo2.writeMicroseconds(map(2048,0,4096,1200,1800));
   servo3.writeMicroseconds(map(2048,0,4096,500,2500));
-  servo4.writeMicroseconds(map(2048,0,4096,500,2500));
+  servo4.writeMicroseconds(map(2048,2048,4096,700,2500));
   
 }
 void setup() 
@@ -99,7 +99,7 @@ void loop()
       unsigned long dt = millis()-prev_millis;
       sprintf(b, "%i,%i,%i,%i,%i\n", \
           (int) dt, data->ch1_x, data->ch1_y, data->ch2_x, data->ch2_y);
-      Serial.print(b);
+      // Serial.print(b);
       
       // Send a reply
       // uint8_t data[] = "And hello back to you";
@@ -110,13 +110,29 @@ void loop()
       // Serial.println(millis()-prev_millis);
       prev_millis = millis();
 
-      servo1.writeMicroseconds(map(data->ch1_x,0,4096,500,2500));
-      servo2.writeMicroseconds(map(data->ch1_y,0,4096,500,2500));
-      servo3.writeMicroseconds(map(data->ch2_x,0,4096,500,2500));
-      servo4.writeMicroseconds(map(data->ch2_y,0,4096,500,2500));
+      int servo1_micros = map(data->ch1_y,0,4096,2000,1000);
+      int servo2_micros = map(data->ch1_x,0,4096,1200,2000);
+      int servo3_micros = map(data->ch2_x,0,4096,1200,1800);
+      int servo4_micros = map(data->ch2_y,2048,4096,700,2000);
+
+      if (servo1_micros < 1000) servo1_micros = 1000;
+      if (servo1_micros > 2000) servo1_micros = 2000;
+      if (servo2_micros < 1200) servo2_micros = 1200;
+      if (servo2_micros > 2000) servo2_micros = 2000;
+
+
+
+      sprintf(b, "%i,%i,%i,%i\n", \
+          servo1_micros, servo2_micros, servo3_micros, servo4_micros);
+      Serial.print(b);
+
+      servo2.writeMicroseconds(servo2_micros);
+      servo1.writeMicroseconds(servo1_micros);
+      servo3.writeMicroseconds(servo3_micros);
+      servo4.writeMicroseconds(servo4_micros);
     }
     else
-    {
+    { 
       Serial.println("recv failed");
     }
   }
