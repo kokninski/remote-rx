@@ -43,6 +43,79 @@ struct DataFrame{
 };
 unsigned long prev_millis = 0;
 
+class LowPassFilter{
+  public:
+    LowPassFilter(float alpha){
+      this->alpha = alpha;
+      this->prev_value = 0;
+    }
+    LowPassFilter(){
+      this->alpha = 0.5;
+      this->prev_value = 0;
+    }
+    float filter(float value){
+      float result = this->alpha * value + (1 - this->alpha) * this->prev_value;
+      this->prev_value = result;
+      return result;
+    }
+    void set_alpha(float alpha){
+      this->alpha = alpha;
+    }
+  private:
+    float alpha;
+    float prev_value;
+};
+
+class ServoController{
+  public:
+    ServoController(Servo servo, int min, int max){
+      this->servo = servo;
+      this->min = min;
+      this->max = max;
+      this->prev_value = 0;
+      this->filter = LowPassFilter(0.9);
+    }
+    int map_servo(int value){
+      return map(value, 0, 4096, this->min, this->max);
+    }
+    void set_position(int position){
+      // Serial.print("Setting position to ");
+      int limited_position = this->map_servo(position);
+      int filtered_position = this->filter.filter(limited_position);
+      // Serial.println(this->prev_value);
+
+      // Check if the position is different from the previous one
+      if(filtered_position != this->prev_value){
+        // Check if position is within bounds
+        if(filtered_position < this->min){
+          filtered_position = this->min;
+        }
+        if(filtered_position > this->max){
+          filtered_position = this->max;
+        }
+        // Update the servo position only if it has changed
+        this->servo.writeMicroseconds(filtered_position);
+        // Serial.println(filtered_position);
+        this->prev_value = filtered_position;
+      }
+    }
+    void set_filter_constant(float alpha){
+      this->filter.set_alpha(alpha);
+    }
+  private:
+    Servo servo;
+    int min;
+    int max;
+    int prev_value;
+    LowPassFilter filter;
+};
+
+// Declare servo controllers for each servo
+ServoController sc1(servo1, 1200, 1800); // aileron
+ServoController sc2(servo2, 1200, 1800); // elevator
+ServoController sc3(servo3, 1200, 1800); // rudder
+ServoController sc4(servo4, 700, 2000); // throttle
+
 void initPins(void){
   pinMode(SERVO1, OUTPUT);
   pinMode(SERVO2, OUTPUT);
@@ -54,17 +127,16 @@ void initPins(void){
   servo3.attach(SERVO3);
   servo4.attach(SERVO4);
 
-  servo1.writeMicroseconds(map(2048,0,4096,1200,1800));
-  servo2.writeMicroseconds(map(2048,0,4096,1200,1800));
-  servo3.writeMicroseconds(map(2048,0,4096,500,2500));
-  servo4.writeMicroseconds(map(2048,2048,4096,700,2500));
-  
+  sc1.set_position(2048);
+  sc2.set_position(2048);
+  sc3.set_position(2048);
+  sc4.set_position(500);
+
 }
 void setup() 
 {
   Serial.begin(9600);
-  while (!Serial) 
-    ; // wait for serial port to connect. Needed for Leonardo only
+  while(!Serial){} // wait for serial
   if (!nrf24.init())
     Serial.println("init failed");
   // Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
@@ -81,55 +153,32 @@ void loop()
 {
   if (nrf24.available())
   {
-    // Should be a message for us now   
+    // Define buffer for incoming message
     uint8_t buf[RH_NRF24_MAX_MESSAGE_LEN];
     uint8_t len = sizeof(buf);
     if (nrf24.recv(buf, &len))
     {
-    //  NRF24::printBuffer("request: ", buf, len);
-      // Serial.print("got request (length ");
-      // Serial.print(len);
-      // Serial.println(").");
-      
+      // create a DataFrame object from the received data
       DataFrame *data = (DataFrame*)buf;
 
+      // Print out the data for debugging
       char b [50];
       // sprintf(b, "CH1X: %i CH1Y: %i\nCH2X: %i CH2Y: %i\n", \
           data->ch1_x, data->ch1_y, data->ch2_x, data->ch2_y);
       unsigned long dt = millis()-prev_millis;
-      sprintf(b, "%i,%i,%i,%i,%i\n", \
-          (int) dt, data->ch1_x, data->ch1_y, data->ch2_x, data->ch2_y);
+      // sprintf(b, "%i,%i,%i,%i,%i\n", \
+      //     (int) dt, data->ch1_x, data->ch1_y, data->ch2_x, data->ch2_y);
       // Serial.print(b);
       
-      // Send a reply
-      // uint8_t data[] = "And hello back to you";
-      // nrf24.send(data, sizeof(data));
-      // nrf24.waitPacketSent();
-      // Serial.println("Sent a reply");
-
       // Serial.println(millis()-prev_millis);
       prev_millis = millis();
 
-      int servo1_micros = map(data->ch1_y,0,4096,2000,1000);
-      int servo2_micros = map(data->ch1_x,0,4096,1200,2000);
-      int servo3_micros = map(data->ch2_x,0,4096,1200,1800);
-      int servo4_micros = map(data->ch2_y,2048,4096,700,2000);
+      sc1.set_position(data->ch1_x); // aileron
+      sc2.set_position(data->ch1_y); // elevator
+      sc3.set_position(data->ch2_x); // rudder
+      sc4.set_position(data->ch2_y); // throttle
+    
 
-      if (servo1_micros < 1000) servo1_micros = 1000;
-      if (servo1_micros > 2000) servo1_micros = 2000;
-      if (servo2_micros < 1200) servo2_micros = 1200;
-      if (servo2_micros > 2000) servo2_micros = 2000;
-
-
-
-      sprintf(b, "%i,%i,%i,%i\n", \
-          servo1_micros, servo2_micros, servo3_micros, servo4_micros);
-      Serial.print(b);
-
-      servo2.writeMicroseconds(servo2_micros);
-      servo1.writeMicroseconds(servo1_micros);
-      servo3.writeMicroseconds(servo3_micros);
-      servo4.writeMicroseconds(servo4_micros);
     }
     else
     { 
