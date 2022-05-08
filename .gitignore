@@ -6,3 +6,4 @@
 .vscode/extensions.json
 .vscode/settings.json
 venv
+platformio_override.ini

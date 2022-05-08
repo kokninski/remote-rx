@@ -1,0 +1,6 @@
+; file containing local overrides for the platformio project configuration file
+
+; [platformio]
+
+; [env:nanoatmega328new]
+; upload_port = COM4
