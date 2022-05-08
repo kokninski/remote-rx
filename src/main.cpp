@@ -14,15 +14,42 @@
 #include <RH_NRF24.h>
 #include <Servo.h>
 
-#define SERVO1 5
-#define SERVO2 6
-#define SERVO3 7
-#define SERVO4 8
+#define SERVO0 5 // aileron_left
+#define SERVO1 6 // aileron_right 
+#define SERVO2 7 // elevator
+#define SERVO3 8 // rudder
+#define SERVO4 4 // throttle
 
-Servo servo1;
-Servo servo2;
-Servo servo3;
-Servo servo4;
+Servo servo0; // aileron_left
+Servo servo1; // aileron_right
+Servo servo2; // elevator
+Servo servo3; // rudder
+Servo servo4; // throttle
+
+#define AILERON_LEFT_INVERTED 1 // -1 for inverted 1 for not inverted
+#define AILERON_RIGHT_INVERTED 1 // -1 for inverted 1 for not inverted
+#define ELEVATOR_INVERTED 1 // -1 for inverted 1 for not inverted
+#define RUDDER_INVERTED 1 // -1 for inverted 1 for not inverted
+
+#define AILERON_LPF_ALPHA 0.8 // low pass filter alpha (0.0 - 1.0)
+#define ELEVATOR_LPF_ALPHA 0.8 // low pass filter alpha (0.0 - 1.0)
+#define RUDDER_LPF_ALPHA 0.8 // low pass filter alpha (0.0 - 1.0)
+#define THROTTLE_LPF_ALPHA 0.8 // low pass filter alpha (0.0 - 1.0)
+
+#define THROTTLE_MODE 0 // 0 for normal 1 for incremental
+
+#if THROTTLE_MODE == 1
+#define MAX_THROTTLE_INCREMENT 300 
+#endif
+
+#define AILERON_MIN_PULSE_WIDTH 1200 // minimum pulse width in microseconds
+#define AILERON_MAX_PULSE_WIDTH 1800 // maximum pulse width in microseconds
+#define ELEVATOR_MIN_PULSE_WIDTH 1200 // minimum pulse width in microseconds
+#define ELEVATOR_MAX_PULSE_WIDTH 1800 // maximum pulse width in microseconds
+#define RUDDER_MIN_PULSE_WIDTH 1200 // minimum pulse width in microseconds
+#define RUDDER_MAX_PULSE_WIDTH 1800 // maximum pulse width in microseconds
+#define THROTTLE_MIN_PULSE_WIDTH 700 // minimum pulse width in microseconds
+#define THROTTLE_MAX_PULSE_WIDTH 2000 // maximum pulse width in microseconds
 
 // Singleton instance of the radio driver
 RH_NRF24 nrf24(10, 9); // CE, CSN
@@ -75,6 +102,14 @@ class ServoController{
       this->prev_value = 0;
       this->filter = LowPassFilter(0.9);
     }
+    // overload the constructor to accept alpha
+    ServoController(Servo servo, int min, int max, float alpha){
+      this->servo = servo;
+      this->min = min;
+      this->max = max;
+      this->prev_value = 0;
+      this->filter = LowPassFilter(alpha);
+    }
     int map_servo(int value){
       return map(value, 0, 4096, this->min, this->max);
     }
@@ -99,9 +134,19 @@ class ServoController{
         this->prev_value = filtered_position;
       }
     }
+    int get_position(){
+      return this->prev_value;
+    }
     void set_filter_constant(float alpha){
       this->filter.set_alpha(alpha);
     }
+    void set_min(int min){
+      this->min = min;
+    }
+    void set_max(int max){
+      this->max = max;
+    }
+
   private:
     Servo servo;
     int min;
@@ -111,22 +156,26 @@ class ServoController{
 };
 
 // Declare servo controllers for each servo
-ServoController sc1(servo1, 1200, 1800); // aileron
-ServoController sc2(servo2, 1200, 1800); // elevator
-ServoController sc3(servo3, 1200, 1800); // rudder
-ServoController sc4(servo4, 700, 2000); // throttle
+ServoController sc0(servo0, AILERON_MIN_PULSE_WIDTH, AILERON_MAX_PULSE_WIDTH); // aileron
+ServoController sc1(servo1, AILERON_MIN_PULSE_WIDTH, AILERON_MAX_PULSE_WIDTH); // aileron
+ServoController sc2(servo2, ELEVATOR_MIN_PULSE_WIDTH, ELEVATOR_MAX_PULSE_WIDTH); // elevator
+ServoController sc3(servo3, RUDDER_MIN_PULSE_WIDTH, RUDDER_MAX_PULSE_WIDTH); // rudder
+ServoController sc4(servo4, THROTTLE_MIN_PULSE_WIDTH, THROTTLE_MAX_PULSE_WIDTH); // throttle
 
 void initPins(void){
+  pinMode(SERVO0, OUTPUT);
   pinMode(SERVO1, OUTPUT);
   pinMode(SERVO2, OUTPUT);
   pinMode(SERVO3, OUTPUT);
   pinMode(SERVO4, OUTPUT);
 
+  servo0.attach(SERVO0);
   servo1.attach(SERVO1);
   servo2.attach(SERVO2);
   servo3.attach(SERVO3);
   servo4.attach(SERVO4);
 
+  sc0.set_position(2048);
   sc1.set_position(2048);
   sc2.set_position(2048);
   sc3.set_position(2048);
@@ -147,6 +196,12 @@ void setup()
   Serial.println("Beginning");
   nrf24.printRegisters();
   initPins();
+
+  sc0.set_filter_constant(AILERON_LPF_ALPHA);
+  sc1.set_filter_constant(AILERON_LPF_ALPHA);
+  sc2.set_filter_constant(ELEVATOR_LPF_ALPHA);
+  sc3.set_filter_constant(RUDDER_LPF_ALPHA);
+  sc4.set_filter_constant(THROTTLE_LPF_ALPHA);
 }
 
 void loop()
@@ -173,12 +228,47 @@ void loop()
       // Serial.println(millis()-prev_millis);
       prev_millis = millis();
 
-      sc1.set_position(data->ch1_x); // aileron
-      sc2.set_position(data->ch1_y); // elevator
-      sc3.set_position(data->ch2_x); // rudder
-      sc4.set_position(data->ch2_y); // throttle
-    
+      // Diferential control for the aileron
+      // The aileron deflecting up shoud move more than the aileron deflecting down
+      // scale factors define the amount of movement
+      
+      int aileron_position = data->ch1_y - 2048;
+      int positive_scale_factor = 1;
+      int negative_scale_factor = 2;
+      int scale_l = (aileron_position > 0) ? positive_scale_factor : negative_scale_factor;
+      int scale_r = (aileron_position > 0) ? negative_scale_factor : positive_scale_factor;
+      
+      int aileron_r = AILERON_RIGHT_INVERTED ? 2048 - aileron_position * scale_r : aileron_position * scale_r + 2048;
+      int aileron_l = AILERON_LEFT_INVERTED ? 2048 - aileron_position * scale_l : aileron_position * scale_l + 2048;
+      
+      int elevator_position = ELEVATOR_INVERTED ? 4096 - data->ch1_x : data->ch1_x; 
+      int rudder_position = RUDDER_INVERTED ? 4096 - data->ch2_x : data->ch2_x;
 
+
+      #if THROTTLE_MODE == 0
+      int throttle_position = data->ch2_y;
+
+      // Incremental throttle implementation
+      #elif THROTTLE_MODE == 1
+          int prev_throttle_position = sc4.get_position();
+          int throttle_increment = map(data->ch2_y, 0, 4096, -MAX_THROTTLE_INCREMENT, MAX_THROTTLE_INCREMENT);
+          int throttle_position = prev_throttle_position + data->ch2_y;
+          if(throttle_position < 0){
+            throttle_position = 0;
+          }
+          if(throttle_position > 4096){
+            throttle_position = 4096;
+          }
+      #endif
+
+
+      // Write the new positions to servos
+      sc0.set_position(aileron_l); // aileron_left
+      sc1.set_position(aileron_r); // aileron_right
+      sc2.set_position(elevator_position); // elevator
+      sc3.set_position(rudder_position); // rudder
+      sc4.set_position(throttle_position); // throttle
+    
     }
     else
     { 
